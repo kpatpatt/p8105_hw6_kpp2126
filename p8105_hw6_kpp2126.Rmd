@@ -35,11 +35,35 @@ log(\hat{\beta_0}*\hat{\beta_1})
 $$
 * Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities.
 ```{r 5k bootstrap samples}
-
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::glance)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>% 
+  ggplot(aes(x = r.squared)) + geom_density()
 ```
 
 2. Plot the distribution of your estimates, and describe these in words. Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for r̂ 2 and log(β̂ 0∗β̂ 1)
 *Note: `broom::glance()` is helpful for extracting r̂ 2 from a fitted regression, and`broom::tidy()` (with some additional wrangling) should help in computing log(β̂ 0∗β̂ 1).
+```{r}
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::tidy)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>% 
+  select(id = `.id`, term, estimate) %>% 
+  pivot_wider(
+    names_from = term, 
+    values_from = estimate) %>% 
+  rename(beta0 = `(Intercept)`, beta1 = tmin) %>% 
+  mutate(log_b0b1 = log(beta0 * beta1)) %>% 
+  ggplot(aes(x = log_b0b1)) + geom_density()
+```
+
 
 ## Problem 2
 ```{r}
@@ -53,12 +77,16 @@ hom_df <- read.csv(text = x)
 ```{r}
 tidyhom_df = hom_df %>%
   mutate(city_state = str_c(city, state, sep = ", "), #create city_state variable
-         disposition = ifelse(disposition %in% c("Closed without arrest", "Open/No arrest"), "unsolved", "solved"),
+         resolved = as.numeric(disposition == "Closed by arrest"), #create 1=resolved or 0=unresolved
          victim_age = as.numeric(victim_age),
-         city_state = ifelse(city_state %in% c("Milwaukee, wI"), "Milwaukee, WI", city_state)) %>% #fixing Milwaukee, wI to WI
+         victim_sex = fct_relevel(victim_sex, "Male"),
+         city_state = ifelse(city_state %in% c("Milwaukee, wI"), "Milwaukee, WI", city_state),
+         victim_race = fct_relevel(victim_race, "White")) %>% #fixing Milwaukee, wI to WI
   filter(!city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"),
-         victim_race %in% c("White", "Black")) %>% #39,693 obs before drop_na(victim_age)
-  drop_na(victim_age) #39,403 obs after drop_na(victim_age) (290 less)
+         victim_race %in% c("White", "Black"),
+         !victim_sex %in% c("Unknown")) %>% #39,693 obs before drop_na(victim_age)
+  drop_na(victim_age) %>% #39,403 obs after drop_na(victim_age) (290 less)
+  select(victim_race, victim_age, victim_sex, city_state, resolved)
 
 ##this was used to double check that the NA coercion in as.numeric(victim_age) -> drop_na(victim_age)
 #tidyhom_df %>%
@@ -75,12 +103,24 @@ tidyhom_df %>%
 ```
 
 
-2. For the city of Baltimore, MD, use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors. 
+2. For the city of Baltimore, MD, use the glm function to fit a logistic regression with (`outcome`) resolved vs unresolved as the outcome and `victim age`, `sex` and `race` as predictors.
+```{r}
+
+```
+
 *Save the output of glm as an R object; 
 *Apply the `broom::tidy` to this object;
 *Obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
 ```{r}
+fit_logistic = 
+  tidyhom_df %>% 
+  glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial()) 
 
+fit_logistic %>% 
+  broom::tidy() %>% 
+  mutate(OR = exp(estimate)) %>%
+  select(term, log_OR = estimate, OR, p.value) %>% 
+  knitr::kable(digits = 3)
 ```
 
 3. Now run glm for each of the cities in your dataset;
@@ -95,6 +135,19 @@ tidyhom_df %>%
 
 ```
 
+
+##Problem 3
+Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+
+Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two. Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+
+Compare your model to two others:
+
+One using length at birth and gestational age as predictors (main effects only)
+One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+
+Note that although we expect your model to be reasonable, model building itself is not a main idea of the course and we don’t necessarily expect your model to be “optimal”.
 
 
 
