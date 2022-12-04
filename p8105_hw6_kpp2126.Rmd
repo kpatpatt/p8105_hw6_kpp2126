@@ -17,6 +17,14 @@ library(table1)
 #install.packages("RCurl")
 library(RCurl)
 library(modelr)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
 ```
 
 ## Problem 1
@@ -263,7 +271,6 @@ bwt_fit2_plot =
 ```
 
 *One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
-*Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
 ```{r}
 bwt_fit3 = lm(bwt ~ bhead + blength + babysex + bhead*blength*babysex, data = birthweight_df)
 summary(bwt_fit3)
@@ -286,7 +293,9 @@ bwt_fit3_plot =
 ```{r}
 bwt_fit_plot + bwt_fit2_plot + bwt_fit3_plot
 ```
+These plots show in all cases mostly random spread along 0 with some outliers, more so seen in the model 3.
 
+*Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
 
 ```{r cross validation}
 #cross val setup
@@ -303,7 +312,7 @@ cv_birthweight_df =
   mutate(
     bwt_fit  = map(train, ~lm(bwt ~ bhead + blength + frace + mrace + momage + wtgain + smoken, data = .x)),
     bwt_fit2  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
-    bwt_fit3  = map(train, ~glm(bwt ~ bhead + blength + babysex + bhead*blength*babysex, data = .x))) %>% 
+    bwt_fit3  = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength*babysex, data = .x))) %>% 
   mutate(
     rmse_fit = map2_dbl(bwt_fit, test, ~rmse(model = .x, data = .y)),
     rmse_fit2 = map2_dbl(bwt_fit2, test, ~rmse(model = .x, data = .y)),
@@ -324,3 +333,5 @@ cv_birthweight_df %>%
        y = "RMSE estimate",
        x = "Model")
 ```
+
+The `bwt_fit` model and the `bwt_fit3` are the best fit models with the `fit` model being the better of the two because of their smaller rmse values. the second model has a larger rmse and may not be as comprehensive in relevant predictors as the first fit and fit3 have accounted for more predictors and interactions.
