@@ -8,6 +8,15 @@ output: github_document
 ```{r libraries}
 library(tidyverse)
 library(dplyr)
+library(labelled)
+library(patchwork)
+#install.packages("ggcorrplot")
+library(ggcorrplot)
+#install.packages("table1")
+library(table1)
+#install.packages("RCurl")
+library(RCurl)
+library(modelr)
 ```
 
 ## Problem 1
@@ -67,7 +76,6 @@ weather_df %>%
 
 ## Problem 2
 ```{r}
-library(RCurl)
 x <- getURL("https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv")
 hom_df <- read.csv(text = x)
 ```
@@ -109,11 +117,13 @@ tidyhom_df %>%
 *Apply the `broom::tidy` to this object;
 *Obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
 ```{r baltimore}
+#creating logistic Rframe
 fit_logistic_baltimore = 
   tidyhom_df %>%
   filter(city_state == "Baltimore, MD") %>%
   glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial()) 
 
+#table
 fit_logistic_baltimore %>% 
   broom::tidy() %>% 
   mutate(OR = exp(estimate),
@@ -126,11 +136,11 @@ fit_logistic_baltimore %>%
 3. Now run glm for each of the cities in your dataset;
 *Extract the adjusted odds ratio (and CI) for solving homicides comparing male victims to female victims. 
 *Do this within a “tidy” pipeline, making use of `purrr::map`, list columns, and unnest as necessary to create a dataframe with estimated ORs and CIs for each city.
-```{rglm for all cities}
+```{r glm for all cities}
 glm_all = 
   tidyhom_df %>%
   nest(data = -city_state) %>% #need to remove to resolve issues with select later
-  mutate(model = map(data, ~glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial())),
+  mutate(model = map(data, ~ glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial())),
          result = map(.x=model, ~broom::tidy(.x,conf.int = TRUE))) %>% 
   select(city_state, result) %>% 
   unnest(result) %>%
@@ -159,17 +169,158 @@ glm_all %>%
 
 
 ##Problem 3
-Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
 
-Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two. Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+1. Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+```{r load data}
+##load raw dataframe
+birthweight_rawdf =
+  read_csv("data/birthweight.csv")
 
-Compare your model to two others:
+##check column NA's
+birthweight_rawdf %>%
+  summarise(across(everything(), ~sum(is.na(.x)))) %>%
+  knitr::kable() #no NA's identified
 
-One using length at birth and gestational age as predictors (main effects only)
-One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
-Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+##tidy
+birthweight_df =
+  birthweight_rawdf %>%
+  drop_na() %>% #quality assurance check
+  set_value_labels(babysex = c("male" = 1, "female" = 2), 
+                   frace = c("white" = 1, "black" = 2, "asian" = 3, "puerto rican" = 4, "other" = 8, "uknown" = 9),
+                   malform = c("absent" = 0, "present" = 1),
+                   mrace = c("white" = 1, "black" = 2, "asian" = 3, "puerto rican" = 4, "other" = 8)) %>%
+  mutate_if(is.labelled, to_factor) 
+```
 
-Note that although we expect your model to be reasonable, model building itself is not a main idea of the course and we don’t necessarily expect your model to be “optimal”.
+2. Propose a regression model for birthweight. 
+*This model may be based on a hypothesized structure for the factors that underlie birthweight, on a data-driven model-building process, or a combination of the two. 
+
+**Table 1**
+```{r}
+pvalue <- function(x, ...) {
+    # Construct vectors of data y, and groups (strata) g
+    y <- unlist(x)
+    g <- factor(rep(1:length(x), times=sapply(x, length)))
+    if (is.numeric(y)) {
+        # For numeric variables, perform a standard 2-sample t-test
+        p <- t.test(y ~ g)$p.value
+    } else {
+        # For categorical variables, perform a chi-squared test of independence
+        p <- chisq.test(table(y, g))$p.value
+    }
+    # Format the p-value, using an HTML entity for the less-than sign.
+    # The initial empty string places the output on the line below the variable label.
+    c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+table1(~ bwt + bhead + blength + delwt + fincome + frace + gaweeks + malform + menarche + mheight + momage + mrace + parity + pnumlbw + pnumsga + ppbmi + ppwt + smoken + wtgain | babysex,
+    data=birthweight_df, overall=F, extra.col=list(`P-value`=pvalue))
+```
+
+*Describe your modeling process and show a plot of model residuals against fitted values – use `add_predictions` and `add_residuals` in making this plot.
+Based on what was significant above from Table 1, I will include unadjusted significant variables into my model that bear some crude relation to birthweight. While some variables appear to not be significant such as `smoken`, previous literature has shown positively associated relationships between maternal smoking while pregnant and low birth weight. 
+
+```{r lm model}
+bwt_fit = lm(bwt ~ bhead + blength + frace + mrace + momage + wtgain + smoken, data = birthweight_df)
+summary(bwt_fit)
+
+bwt_fit %>% 
+  broom::glance() %>% 
+  broom::tidy()
+
+bwt_fit_plot = 
+  birthweight_df %>% 
+  add_residuals(bwt_fit) %>% 
+  add_predictions(bwt_fit) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point(color = "red") +
+  labs(title = "Model 1: Residual vs. Fitted Estimate",
+       y = "Residual",
+       x = "Fitted Estimate")
+```
 
 
+3. Compare your model to two others:
 
+*One using length at birth and gestational age as predictors (main effects only)
+```{r}
+bwt_fit2 = lm(bwt ~ blength + gaweeks, data = birthweight_df)
+summary(bwt_fit2)
+
+bwt_fit2 %>% 
+  broom::glance()%>% 
+  broom::tidy()
+
+bwt_fit2_plot = 
+  birthweight_df %>% 
+  add_residuals(bwt_fit2) %>% 
+  add_predictions(bwt_fit2) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point(color = "blue") +
+  labs(title = "Model 2 Main Effects: Residual vs. Fitted Estimate",
+       y = "Residual",
+       x = "Fitted Estimate")
+```
+
+*One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+*Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+```{r}
+bwt_fit3 = lm(bwt ~ bhead + blength + babysex + bhead*blength*babysex, data = birthweight_df)
+summary(bwt_fit3)
+
+bwt_fit3 %>% 
+  broom::glance()%>% 
+  broom::tidy()
+
+bwt_fit3_plot = 
+  birthweight_df %>% 
+  add_residuals(bwt_fit3) %>% 
+  add_predictions(bwt_fit3) %>%
+  ggplot(aes(x = pred, y = resid)) + geom_point() +
+  labs(title = "Model 3 Three Interaction: Residual vs. Fitted Estimate",
+       y = "Residual",
+       x = "Fitted Estimate")
+```
+
+**plots**
+```{r}
+bwt_fit_plot + bwt_fit2_plot + bwt_fit3_plot
+```
+
+
+```{r cross validation}
+#cross val setup
+cv_birthweight_df = 
+  crossv_mc(birthweight_df, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+  )
+
+#map function
+cv_birthweight_df = 
+  cv_birthweight_df %>% 
+  mutate(
+    bwt_fit  = map(train, ~lm(bwt ~ bhead + blength + frace + mrace + momage + wtgain + smoken, data = .x)),
+    bwt_fit2  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    bwt_fit3  = map(train, ~glm(bwt ~ bhead + blength + babysex + bhead*blength*babysex, data = .x))) %>% 
+  mutate(
+    rmse_fit = map2_dbl(bwt_fit, test, ~rmse(model = .x, data = .y)),
+    rmse_fit2 = map2_dbl(bwt_fit2, test, ~rmse(model = .x, data = .y)),
+    rmse_fit3 = map2_dbl(bwt_fit3, test, ~rmse(model = .x, data = .y)))
+
+#plot
+cv_birthweight_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse, color = model)) + 
+  geom_violin() +
+  labs(title = "Violin Plot: 3 Models with RMSE",
+       y = "RMSE estimate",
+       x = "Model")
+```
